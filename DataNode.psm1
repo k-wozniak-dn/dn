@@ -205,44 +205,44 @@ Set-Alias -Name sdni -Value Set-DnItem
 
 function Remove-DnItem {
     [CmdletBinding()]
-    param (
+        param (
         [Parameter(Mandatory = $true, ValueFromPipeline = $true)] [PSCustomObject] $Dn,
         [Parameter(Mandatory = $true)] [string] $Path
     )
 
     Begin {
-        $Parent = Split-Path $Path -Parent;
-        $Leaf =  Split-Path $Path -Leaf;
-        if ([string]::Empty -eq $Parent) { 
-            $Parent = $Leaf ; 
-            $Leaf = [string]::Empty 
-        }
-        if ([string]::Empty -eq $Parent) { throw "Incorrect path '$Path'." }
+        $dnPath = Get-DnPath -Path $Path;
     }
 
     Process {
-        [hashtable] $DnHT = $dn.HT;
-        $MatchingSectionKeys = $DnHT.Keys | Where-Object { $_ -like $Parent }
+        [hashtable] $Value = $dn.Value;
+        $MatchingSectionKeys = $Value.Keys | Where-Object { $_ -like $dnPath.Section }
 
         foreach ($SectionKey in $MatchingSectionKeys) {
-                $Section = $DnHT[$SectionKey];
-                if ([string]::Empty -eq $Leaf) {
-                    $ItemWrapper = [PSCustomObject] @{"ItemType" = [ItemType]::Section; "Key" = $SectionKey; "HT" = $Section }
-                    Write-Output $ItemWrapper                    
-                }
-                else {
-                    $MatchingItemKeys = $Section.Keys | Where-Object { $_ -like $Leaf }
-                    foreach ($ItemKey in $MatchingItemKeys) {
-                        $Item = $Section[$ItemKey];
-                        $FullKey = "${SectionKey}/${ItemKey}";
-                        $ItemWrapper = [PSCustomObject] @{"ItemType" = [ItemType]::Item; "Key" = $FullKey; "HT" = $Item }
-                        Write-Output $ItemWrapper  
+            if ($dnPath.PathType -eq [ItemType]::Section) {
+                $Value.Remove($SectionKey);                   
+            }
+            else {
+                $Section = $Value[$SectionKey];                
+                $MatchingItemKeys = $Section.Keys | Where-Object { $_ -like $dnPath.Item }
+                foreach ($ItemKey in $MatchingItemKeys) {
+                    if ($dnPath.PathType -eq [ItemType]::Item) {
+                        $Section.Remove($ItemKey);                            
+                    }
+                    else {
+                        $Item = $Section[$ItemKey];                         
+                        $MatchingPropertyKeys = $Item.Keys | Where-Object { $_ -like $dnPath.Property }
+                        foreach ($PropertyKey in $MatchingPropertyKeys) {
+                            $Item.Remove($PropertyKey);
+                        }
                     }
                 }
             }
+        }
     }
 
     End {
+        Write-Output $Dn;
     }
 }
 
