@@ -4,14 +4,8 @@ enum ItemType {
     s;
     i;
     p;
-}
-
-enum DnItemInfo {
-    it;
-    k;
-    p;
-    v;
-    vt;
+    eos;
+    eoi;
 }
 
 enum DnPath {
@@ -85,10 +79,12 @@ function New-DnItem {
             ($_ -eq [ItemType]::dn) -or 
             ($_ -eq [ItemType]::s) -or 
             ($_ -eq [ItemType]::i) -or 
-            ($_ -eq [ItemType]::p)
+            ($_ -eq [ItemType]::p) -or
+            ($_ -eq [ItemType]::eos) -or
+            ($_ -eq [ItemType]::eoi)
         })] $ItemType = [ItemType]::p,
 
-        [Parameter(Mandatory = $true)] [Alias("k")] [string] $Key = $null,
+        [Parameter(Mandatory = $false)] [Alias("k")] [string] $Key = $null,
 
         [Parameter(Mandatory = $false)] [Alias("p")] [string] $Path,
 
@@ -108,7 +104,14 @@ function New-DnItem {
         if ($ItemType -eq [ItemType]::p) {
             if ($Value -is [hashtable]) { throw "Incorrect Value type." }
         }
-        elseif (($ItemType -eq [ItemType]::i) -or ($ItemType -eq [ItemType]::s) -or ($ItemType -eq [ItemType]::dn)) {
+        elseif (
+            ($ItemType -eq [ItemType]::i) -or 
+            ($ItemType -eq [ItemType]::s) -or 
+            ($ItemType -eq [ItemType]::dn) -or
+            ($ItemType -eq [ItemType]::eos) -or
+            ($ItemType -eq [ItemType]::eoi)
+            ) 
+        {
             if (-not ($Value -is [hashtable])) { throw "Incorrect Value type." }
         }      
         else { throw "Unhandled ItemType." }
@@ -119,11 +122,11 @@ function New-DnItem {
 
     End {
         Write-Output [PSCustomObject] @{ 
-            [DnItemInfo]::it = $ItemType; 
-            [DnItemInfo]::k = $Key;
-            [DnItemInfo]::p = $Path; 
-            [DnItemInfo]::v = $Value;
-            [DnItemInfo]::vt = ($val.GetType().ToString() -split "\.") | Select-Object -Last 1
+            it = $ItemType; 
+            k = $Key;
+            p = $Path; 
+            v = $Value;
+            vt = ($Value.GetType().ToString() -split "\.") | Select-Object -Last 1
         }
     }
 }
@@ -147,12 +150,12 @@ function Import-Dn {
             $ext = $FileInfo.Extension;
             switch ($ext) {
                 { $_ -eq ("." + [FileFormatEnum]::psd1) } { 
-                    $dn = Import-PowerShellDataFile -Path $FileInfo.FullName ;
+                    $dn = Import-PowerShellDataFile -Path $FileInfo.FullName -SkipLimitCheck ;
                     break; 
                 }
                 default { throw "File format '$ext' not supported." }
             }
-            ndni -it [ItemType]::dn -k $null -p $FileInfo.FullName -v $dn;
+            ndni -it ([ItemType]::dn) -k $null -p $FileInfo.FullName -v $dn;
         }
         catch {
             Write-Error $_
@@ -169,7 +172,8 @@ function Get-DnItem {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $true, ValueFromPipeline = $true)] [PSCustomObject] $Dn,
-        [Parameter(Mandatory = $true)] [string] $Path
+        [Parameter(Mandatory = $true)] [string] $Path,
+        [Parameter(Mandatory = $false)] [switch] $AddParents
     )
 
     Begin {
@@ -186,23 +190,27 @@ function Get-DnItem {
                 ndni -it ([ItemType]::s) -k $SectionKey -p $SectionKey -v $Section                    
             }
             else {
+                if ($AddParents) { ndni -it ([ItemType]::s) -k $SectionKey -p $SectionKey -v $Section ; }
                 $MatchingItemKeys = $Section.Keys | Where-Object { $_ -like $dnPath.ItemPart }
                 foreach ($ItemKey in $MatchingItemKeys) {
+                    $ItemPath = "${SectionKey}${PathDelimiter}${ItemKey}";                    
                     $Item = $Section[$ItemKey];              
                     if ($dnPath.PathType -eq [ItemType]::i) {
-                        $FullPath = "${SectionKey}${PathDelimiter}${ItemKey}";
-                        ndni -it ([ItemType]::i) -k $ItemKey -p $FullPath -v $Item                            
+                        ndni -it ([ItemType]::i) -k $ItemKey -p $ItemPath -v $Item                            
                     }
                     else {
+                        if ($AddParents) { ndni -it ([ItemType]::i) -k $ItemKey -p $ItemPath -v $Item  }
                         $MatchingPropertyKeys = $Item.Keys | Where-Object { $_ -like $dnPath.PropertyPart }
                         foreach ($PropertyKey in $MatchingPropertyKeys) {
+                            $PropertyPath = "${SectionKey}${PathDelimiter}${ItemKey}${PathDelimiter}${PropertyKey}";                            
                             $Property = $Item[$PropertyKey];
-                            $FullPath = "${SectionKey}${PathDelimiter}${ItemKey}${PathDelimiter}${PropertyKey}";
-                            ndni -it ([ItemType]::p) -k $PropertyKey -p $FullPath -v $Property
+                            ndni -it ([ItemType]::p) -k $PropertyKey -p $PropertyPath -v $Property
                         }
                     }
+                    if ($AddParents) { ndni -it ([ItemType]::eoi) -k $ItemKey -p $ItemPath -v $Item  }
                 }
             }
+            if ($AddParents) { ndni -it ([ItemType]::eos) -k $SectionKey -p $SectionKey -v $Section  }
         }
     }
 
@@ -299,7 +307,48 @@ Set-Alias -Name rdni -Value Remove-DnItem
 #endregion
 
 #region l-2
+function Export-Dn {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)] [PSCustomObject] $DnItem,
+        [Parameter(Mandatory = $true)] [string] $Path
+    )
 
+    try {
+        if ($DnItem.it -ne [ItemType]::dn) { throw "Only DataNode can be exported." }
+        $ext = [System.IO.Path]::GetExtension($Path);
+        switch ($ext) {
+            { $_ -eq ("." + [FileFormatEnum]::psd1) } { 
+                $output = "@{`n";
+                gdni -Dn $DnItem -Path "*${PathDelimiter}*${PathDelimiter}*" -AddParents |
+                ForEach-Object {
+                    $dni = $_;
+                    switch ($dni.it) {
+                        { $_ -eq [ItemType]::s } { $output += "`t$($dni.k) = @{`n"; }
+                        { $_ -eq [ItemType]::i } { $output += "`t`t$($dni.k) = @{`n"; }
+                        { $_ -eq [ItemType]::p } { 
+                            $textDelimiter = $dni.vt -eq [ValueType]::String ? "'" : ""
+                            $output += "`t`t`t$($dni.k) = ${textDelimiter}$($dni.v)${textDelimiter};`n"; 
+                        }
+                        { $_ -eq [ItemType]::eos } { $output += "`t};`n"; }
+                        { $_ -eq [ItemType]::eoi } { $output += "`t`t};`n"; }
+                    }
+                }
+                $output += "}";
+                break; 
+            }
+            default { throw "File format '$ext' not supported." }
+        }
+    }
+    catch {
+        Write-Error $_
+    }        
+
+    Set-Content -Path $Path -Value $output;
+    Get-Item -Path $Path;
+}
+
+Set-Alias -Name exdn -Value Export-Dn
 #endregion
 
 Export-ModuleMember -Function *
