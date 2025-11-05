@@ -1,38 +1,11 @@
 #region const
-enum ItemType {
-    dn;
-    s;
-    i;
-    p;
-    eos;
-    eoi;
-}
-
-enum DnPath {
-    PathType;
-    SectionPart;
-    ItemPart;
-    PropertyPart;
-    ParentPath;
-}
-
-enum FileFormatEnum {
-    psd1;
-    json;
-    xml;
-    csv;
-}
-
-enum ValueType {
-    Hashtable;
-    String;
-    Int32;
-    Double;
-    Boolean;
-}
+enum ItemType { DN; S; I; P; EoS; EoI; }
+enum ItemMember { IT; K; P; V; VT; }
+enum DNPathMember { PathType; SectionPart; ItemPart; PropertyPart; ParentPath; }
+enum FileFormatEnum {psd1; json; xml; csv; }
+enum ValueType { Hashtable; String; Int32; Double; Boolean; }
 
 Set-Variable -Name 'PathDelimiter' -Value '/' -Option ReadOnly
-
 #endregion
 
 #region l-0
@@ -48,86 +21,54 @@ function Copy-HashtableDeep {
     return $deepCopy
 }
 
-function Get-DnPath {
+function Get-DNPath {
     param (
         [Parameter(Mandatory = $true)] [string] $Path
     )
-    Begin {
-        $parts = $Path -split [regex]::Escape($PathDelimiter);
-        $count = ($parts).Count;
-        if ($count -gt 3) { throw "Incorrect path '$path'." }
-        $parts | ForEach-Object { if ([string]::Empty -eq $_) {throw "Incorrect path '$path'."}}
-    }
 
-    End {
-        return [PSCustomObject] @{ 
-            [DnPath]::PathType = ($count -eq 1) ? [ItemType]::s : (($count -eq 2) ? [ItemType]::i : [ItemType]::p); 
-            [DnPath]::SectionPart = $parts[0]; 
-            [DnPath]::ItemPart = $count -gt 1 ? $parts[1] : $null ; 
-            [DnPath]::PropertyPart = $count -gt 2 ? $parts[2] : $null ;
-            [DnPath]::ParentPath = ($count -eq 1) ? $null : (($count -eq 2) ? $parts[0] : $parts[0] + $PathDelimiter + $parts[1]); 
-            }        
-    }
+    $parts = $Path -split [regex]::Escape($PathDelimiter);
+    $count = ($parts).Count;
+    if ($count -gt 3) { throw "Incorrect path '$path'." }
+    $parts | ForEach-Object { if ([string]::Empty -eq $_) { throw "Incorrect path '$path'." } }
+
+    return [PSCustomObject] @{ 
+        [DNPathMember]::PathType.ToString()     = ($count -eq 1) ? [ItemType]::S : (($count -eq 2) ? [ItemType]::I : [ItemType]::P); 
+        [DNPathMember]::SectionPart.ToString()  = $parts[0]; 
+        [DNPathMember]::ItemPart.ToString()     = $count -gt 1 ? $parts[1] : $null ; 
+        [DNPathMember]::PropertyPart.ToString() = $count -gt 2 ? $parts[2] : $null ;
+        [DNPathMember]::ParentPath.ToString()   = ($count -eq 1) ? $null : (($count -eq 2) ? $parts[0] : $parts[0] + $PathDelimiter + $parts[1]); 
+    }        
 }
 
-function New-DnItem {
+function New-DNItem {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $false)] [string] 
-        [Alias("it")]
-        [ValidateScript({ 
-            ($_ -eq [ItemType]::dn) -or 
-            ($_ -eq [ItemType]::s) -or 
-            ($_ -eq [ItemType]::i) -or 
-            ($_ -eq [ItemType]::p) -or
-            ($_ -eq [ItemType]::eos) -or
-            ($_ -eq [ItemType]::eoi)
-        })] $ItemType = [ItemType]::p,
+        [Alias("IT")]
+        [ValidateScript({ @([ItemType]::DN, [ItemType]::S, [ItemType]::I, [ItemType]::P, [ItemType]::EoS, [ItemType]::EoI).Contains([ItemType]::$_) })]
+        $ItemType = [ItemType]::P,
 
-        [Parameter(Mandatory = $false)] [Alias("k")] [string] $Key = $null,
+        [Parameter(Mandatory = $false)] [Alias("K")] [string] $Key = $null,
 
-        [Parameter(Mandatory = $false)] [Alias("p")] [string] $Path,
+        [Parameter(Mandatory = $false)] [Alias("P")] [string] $Path,
 
         [Parameter(Mandatory = $true)] 
-        [Alias("v")]
-        [ValidateScript({ 
-            ($_ -is [hashtable]) -or 
-            ($_ -is [string]) -or 
-            ($_ -is [int]) -or 
-            ($_ -is [double]) -or
-            ($_ -is [bool])
-        })] $Value
-
+        [Alias("V")] 
+        [ValidateScript({ ($_ -is [hashtable]) -or ($_ -is [string]) -or ($_ -is [int]) -or ($_ -is [double]) -or ($_ -is [bool]) })]
+        $Value
     )
-
-    Begin {
-        if ($ItemType -eq [ItemType]::p) {
-            if ($Value -is [hashtable]) { throw "Incorrect Value type." }
-        }
-        elseif (
-            ($ItemType -eq [ItemType]::i) -or 
-            ($ItemType -eq [ItemType]::s) -or 
-            ($ItemType -eq [ItemType]::dn) -or
-            ($ItemType -eq [ItemType]::eos) -or
-            ($ItemType -eq [ItemType]::eoi)
-            ) 
-        {
-            if (-not ($Value -is [hashtable])) { throw "Incorrect Value type." }
-        }      
-        else { throw "Unhandled ItemType." }
+    
+    if ([ItemType]::$ItemType -eq [ItemType]::P) {
+        if ($Value -is [hashtable]) { throw "Incorrect Value Type." }
     }
+    elseif (-not ($Value -is [hashtable])) { throw "Incorrect Value type." }  
 
-    Process {
-    }
-
-    End {
-        Write-Output [PSCustomObject] @{ 
-            it = $ItemType; 
-            k = $Key;
-            p = $Path; 
-            v = $Value;
-            vt = ($Value.GetType().ToString() -split "\.") | Select-Object -Last 1
-        }
+    return [PSCustomObject] @{ 
+        [ItemMember]::IT.ToString() = $ItemType; 
+        [ItemMember]::K.ToString() = $Key;
+        [ItemMember]::P.ToString() = $Path; 
+        [ItemMember]::V.ToString() = $Value;
+        [ItemMember]::VT.ToString() = ($Value.GetType().ToString() -split "\.") | Select-Object -Last 1
     }
 }
 
@@ -136,14 +77,12 @@ Set-Alias -Name ndni -Value New-DnItem
 #endregion
 
 #region l-1
-function Import-Dn {
+function Import-DN {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
         [System.IO.FileInfo] $FileInfo
     )
-    Begin {
-    }
 
     Process {
         try {
@@ -155,96 +94,89 @@ function Import-Dn {
                 }
                 default { throw "File format '$ext' not supported." }
             }
-            ndni -it ([ItemType]::dn) -k $null -p $FileInfo.FullName -v $dn;
+            ndni -IT ([ItemType]::DN) -K $null -P $FileInfo.FullName -V $dn | Write-Output;
         }
         catch {
             Write-Error $_
         }
     }
-
-    End {
-    }
 }
 
-Set-Alias -Name ipdn -Value Import-Dn
+Set-Alias -Name impdn -Value Import-Dn
 
-function Get-DnItem {
+function Get-DNChildItem {
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory = $true, ValueFromPipeline = $true)] [PSCustomObject] $Dn,
-        [Parameter(Mandatory = $true)] [string] $Path,
+        [Parameter(Mandatory = $true)] 
+        [ValidateScript({ [ItemType]::($_.IT) -eq [ItemType]::DN })]
+        [PSCustomObject] $DN,
+
+        [Parameter(Mandatory = $true)] [Alias("P")] [string] $Path,
+
         [Parameter(Mandatory = $false)] [switch] $AddParents
     )
 
-    Begin {
-        $dnPath = Get-DnPath -Path $Path;
-    }
+    $dnPath = Get-DNPath -Path $Path;
+    $output = @();
 
-    Process {
-        [hashtable] $Root = $dn.v;
+        [hashtable] $Root = $DN.V;
         $MatchingSectionKeys = $Root.Keys | Where-Object { $_ -like $dnPath.SectionPart }
 
         foreach ($SectionKey in $MatchingSectionKeys) {
             $Section = $Root[$SectionKey];
-            if ($dnPath.PathType -eq [ItemType]::s) {
-                ndni -it ([ItemType]::s) -k $SectionKey -p $SectionKey -v $Section                    
+            if ([ItemType]::($dnPath.PathType) -eq [ItemType]::S) {
+                $output += (ndni -IT ([ItemType]::S) -K $SectionKey -P $SectionKey -V $Section)               
             }
             else {
-                if ($AddParents) { ndni -it ([ItemType]::s) -k $SectionKey -p $SectionKey -v $Section ; }
+                if ($AddParents) { $output += (ndni -IT ([ItemType]::S) -K $SectionKey -P $SectionKey -V $Section) ; }
                 $MatchingItemKeys = $Section.Keys | Where-Object { $_ -like $dnPath.ItemPart }
                 foreach ($ItemKey in $MatchingItemKeys) {
                     $ItemPath = "${SectionKey}${PathDelimiter}${ItemKey}";                    
                     $Item = $Section[$ItemKey];              
-                    if ($dnPath.PathType -eq [ItemType]::i) {
-                        ndni -it ([ItemType]::i) -k $ItemKey -p $ItemPath -v $Item                            
+                    if ([ItemType]::($dnPath.PathType) -eq [ItemType]::I) {
+                        $output += (ndni -IT ([ItemType]::I) -K $ItemKey -P $ItemPath -V $Item )                      
                     }
                     else {
-                        if ($AddParents) { ndni -it ([ItemType]::i) -k $ItemKey -p $ItemPath -v $Item  }
+                        if ($AddParents) { $output += (ndni -IT ([ItemType]::I) -K $ItemKey -P $ItemPath -V $Item)  }
                         $MatchingPropertyKeys = $Item.Keys | Where-Object { $_ -like $dnPath.PropertyPart }
                         foreach ($PropertyKey in $MatchingPropertyKeys) {
                             $PropertyPath = "${SectionKey}${PathDelimiter}${ItemKey}${PathDelimiter}${PropertyKey}";                            
                             $Property = $Item[$PropertyKey];
-                            ndni -it ([ItemType]::p) -k $PropertyKey -p $PropertyPath -v $Property
+                            $output += (ndni -IT ([ItemType]::P) -K $PropertyKey -P $PropertyPath -V $Property)
                         }
                     }
-                    if ($AddParents) { ndni -it ([ItemType]::eoi) -k $ItemKey -p $ItemPath -v $Item  }
+                    if ($AddParents) { $output += (ndni -IT ([ItemType]::EoI) -K $ItemKey -P $ItemPath -V $Item)  }
                 }
             }
-            if ($AddParents) { ndni -it ([ItemType]::eos) -k $SectionKey -p $SectionKey -v $Section  }
+            if ($AddParents) { $output += (ndni -IT ([ItemType]::EoS) -K $SectionKey -P $SectionKey -V $Section)  }
         }
-    }
-
-    End {
-    }
+        return $output;
 }
 
-Set-Alias -Name gdni -Value Get-DnItem
+Set-Alias -Name gdnci -Value Get-DNChildItem
 
-function Join-DnItem {
+function Join-DNItem {
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory = $true, ValueFromPipeline = $true)] [Alias("child")] [PSCustomObject] $ChildItem,
-        [Parameter(Mandatory = $true)] [Alias("parent")] [PSCustomObject] $ParentItem,
-        [Parameter(Mandatory = $false)] [Alias("no")] [switch] $NotOverride,
-        [Parameter(Mandatory = $false)] [Alias("nocopy")] [switch] $NoCopyHashtable
+        [Parameter(Mandatory = $true, ValueFromPipeline = $true)] [Alias("Child")] [PSCustomObject] $ChildItem,
+        [Parameter(Mandatory = $true)] [Alias("Parent")] [PSCustomObject] $ParentItem,
+        [Parameter(Mandatory = $false)] [Alias("NOvr")] [switch] $NotOverride,
+        [Parameter(Mandatory = $false)] [Alias("NoCopy")] [switch] $NoCopyHashtable
     )
-
-    Begin {
-    }
 
     Process {
         # validation of PSCustomObject not possible in param script
-        if ( -not @([ItemType]::s, [ItemType]::i, [ItemType]::p).Contains($ChildItem.it))  { throw "Invalid Item Type." }
+        if ( -not @([ItemType]::S, [ItemType]::I, [ItemType]::P).Contains([ItemType]::($ChildItem.IT)))  { throw "Invalid Item Type." }
         $validBind = (
-            ($ParentItem.it -eq [ItemType]::dn -and $ChildItem.it -eq [ItemType]::s) -or
-            ($ParentItem.it -eq [ItemType]::s -and $ChildItem.it -eq [ItemType]::i) -or
-            ($ParentItem.it -eq [ItemType]::i -and $ChildItem.it -eq [ItemType]::p)
+            ([ItemType]::($ParentItem.IT) -eq [ItemType]::DN -and [ItemType]::($ChildItem.IT) -eq [ItemType]::S) -or
+            ([ItemType]::($ParentItem.IT) -eq [ItemType]::S -and [ItemType]::($ChildItem.IT) -eq [ItemType]::I) -or
+            ([ItemType]::($ParentItem.IT) -eq [ItemType]::I -and [ItemType]::($ChildItem.IT) -eq [ItemType]::P)
         )
         if (-not $validBind)  { throw "Invalid operation." }
 
-        if ($NotOverride -and $ParentItem.v.ContainsKey($ChildItem.k)) { throw "Overriding prohibited." }
+        if ($NotOverride -and $ParentItem.V.ContainsKey($ChildItem.K)) { throw "Overriding prohibited." }
         else {
-            $ParentItem[$ChildItem.k] = ($NoCopyHashtable) ? $ChildItem.v : (Copy-HashtableDeep -InputObject $ChildItem.v );
+            $ParentItem[$ChildItem.k] = ($NoCopyHashtable) ? $ChildItem.V : (Copy-HashtableDeep -InputObject $ChildItem.V );
         }        
     }
 
@@ -253,32 +185,34 @@ function Join-DnItem {
     }
 }
 
-Set-Alias -Name jdni -Value Set-DnItem
+Set-Alias -Name jdni -Value Join-DnItem
 
-function Remove-DnItem {
+function Remove-DNChildItem {
     [CmdletBinding()]
         param (
-        [Parameter(Mandatory = $true, ValueFromPipeline = $true)] [PSCustomObject] $Dn,
-        [Parameter(Mandatory = $true)] [string] $Path
+        [Parameter(Mandatory = $true, ValueFromPipeline = $true)] 
+        [ValidateScript({ [ItemType]::($_.IT) -eq [ItemType]::DN })]
+        [PSCustomObject] $DN,
+        [Parameter(Mandatory = $true)] [Alias("P")] [string] $Path
     )
 
     Begin {
-        $dnPath = Get-DnPath -Path $Path;
+        $dnPath = Get-DNPath -Path $Path;
     }
 
     Process {
-        [hashtable] $Root = $dn.v;
+        [hashtable] $Root = $DN.V;
         $MatchingSectionKeys = $Root.Keys | Where-Object { $_ -like $dnPath.SectionPart }
 
         foreach ($SectionKey in $MatchingSectionKeys) {
-            if ($dnPath.PathType -eq [ItemType]::s) {
+            if ([ItemType]::($dnPath.PathType) -eq [ItemType]::S) {
                 $Root.Remove($SectionKey);                   
             }
             else {
                 $Section = $Root[$SectionKey];                
                 $MatchingItemKeys = $Section.Keys | Where-Object { $_ -like $dnPath.ItemPart }
                 foreach ($ItemKey in $MatchingItemKeys) {
-                    if ($dnPath.PathType -eq [ItemType]::i) {
+                    if ([ItemType]::($dnPath.PathType) -eq [ItemType]::I) {
                         $Section.Remove($ItemKey);                            
                     }
                     else {
@@ -298,40 +232,41 @@ function Remove-DnItem {
     }
 
     End {
-        Write-Output $Dn;
+        Write-Output $DN;
     }
 }
 
-Set-Alias -Name rdni -Value Remove-DnItem
+Set-Alias -Name rmdnci -Value Remove-DNChildItem
 
 #endregion
 
 #region l-2
-function Export-Dn {
+function Export-DN {
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory = $true)] [PSCustomObject] $DnItem,
-        [Parameter(Mandatory = $true)] [string] $Path
+        [ValidateScript({ [ItemType]::($_.IT) -eq [ItemType]::DN })]
+        [Parameter(Mandatory = $true)] [PSCustomObject] $DN,
+        [Parameter(Mandatory = $false)] [Alias("FP")] [string] $FilePath
     )
 
     try {
-        if ($DnItem.it -ne [ItemType]::dn) { throw "Only DataNode can be exported." }
-        $ext = [System.IO.Path]::GetExtension($Path);
+        $FilePath = $FilePath ?? $DN.P
+        $ext = [System.IO.Path]::GetExtension($FilePath);
         switch ($ext) {
             { $_ -eq ("." + [FileFormatEnum]::psd1) } { 
                 $output = "@{`n";
-                gdni -Dn $DnItem -Path "*${PathDelimiter}*${PathDelimiter}*" -AddParents |
+                gdnci -DN $DN -P "*${PathDelimiter}*${PathDelimiter}*" -AddParents |
                 ForEach-Object {
                     $dni = $_;
                     switch ($dni.it) {
-                        { $_ -eq [ItemType]::s } { $output += "`t$($dni.k) = @{`n"; }
-                        { $_ -eq [ItemType]::i } { $output += "`t`t$($dni.k) = @{`n"; }
-                        { $_ -eq [ItemType]::p } { 
-                            $textDelimiter = $dni.vt -eq [ValueType]::String ? "'" : ""
-                            $output += "`t`t`t$($dni.k) = ${textDelimiter}$($dni.v)${textDelimiter};`n"; 
+                        { $_ -eq [ItemType]::S } { $output += "`t$($dni.K) = @{`n"; }
+                        { $_ -eq [ItemType]::I } { $output += "`t`t$($dni.K) = @{`n"; }
+                        { $_ -eq [ItemType]::P } { 
+                            $textDelimiter = $dni.VT -eq [ValueType]::String ? "'" : ""
+                            $output += "`t`t`t$($dni.K) = ${textDelimiter}$($dni.V)${textDelimiter};`n"; 
                         }
-                        { $_ -eq [ItemType]::eos } { $output += "`t};`n"; }
-                        { $_ -eq [ItemType]::eoi } { $output += "`t`t};`n"; }
+                        { $_ -eq [ItemType]::EoI } { $output += "`t`t};`n"; }                        
+                        { $_ -eq [ItemType]::EoS } { $output += "`t};`n"; }
                     }
                 }
                 $output += "}";
@@ -344,11 +279,52 @@ function Export-Dn {
         Write-Error $_
     }        
 
-    Set-Content -Path $Path -Value $output;
-    Get-Item -Path $Path;
+    Set-Content -Path $FilePath -Value $output;
+    Get-Item -Path $FilePath;
 }
 
-Set-Alias -Name exdn -Value Export-Dn
+Set-Alias -Name expdn -Value Export-DN
+
+function Set-DNItem {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true, ValueFromPipeline = $true)] [Alias("I")] [PSCustomObject] $Item,
+        [Parameter(Mandatory = $true)] [Alias("DN")] [PSCustomObject] $DN,
+        [Parameter(Mandatory = $false)] [Alias("NOvr")] [switch] $NotOverride,
+        [Parameter(Mandatory = $false)] [Alias("NoCopy")] [switch] $NoCopyHashtable
+    )
+
+    Process {
+        $iPath = Get-DNPath -Path $ChildItem.P;
+        [hashtable] $Root = $DN.V;
+
+        if ([ItemType]::($dnPath.PathType) -eq [ItemType]::S) {
+            jdni -Parent $Root -Child $ChildItem -NOvr $NotOverride -NoCopy $NoCopyHashtable;
+            retturn;
+        }
+        else {
+            if (-not $Root.ContainsKey($iPath.SectionPart)) { $Root[$iPath.SectionPart] = @{}; }            
+            $Section = $Root[$iPath.SectionPart];
+            if ([ItemType]::($dnPath.PathType) -eq [ItemType]::I) {
+                jdni -Parent $Section -Child $ChildItem -NOvr $NotOverride -NoCopy $NoCopyHashtable;
+                retturn;
+            }
+            else {
+                if (-not $Section.ContainsKey($iPath.ItemPart)) { $Section[$iPath.ItemPart] = @{}; }  
+                $Item = $Section[$iPath.ItemPart];
+                jdni -Parent $Item -Child $ChildItem -NOvr $NotOverride -NoCopy $NoCopyHashtable;
+                retturn;
+            }
+        }
+    }
+
+    End {
+        Write-Output $DN;
+    }
+}
+
+Set-Alias -Name sdni -Value Set-DnItem
+
 #endregion
 
 Export-ModuleMember -Function *

@@ -1,7 +1,7 @@
 @{
     Header = @{
         Itm_0 = @{
-            Tag = 'Utility';
+            Tag = $true;
             LicenseUri = 'https://opensource.org/licenses/MIT';
             ProjectUri = 'https://github.com/yourrepo/mymodule';
             Id = 10;
