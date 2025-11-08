@@ -79,7 +79,10 @@ function New-DNChild {
         [Parameter(Mandatory = $false)] 
         [Alias("V")] 
         [ValidateScript({ ($_ -is [hashtable]) -or ($_ -is [string]) -or ($_ -is [int]) -or ($_ -is [double]) -or ($_ -is [bool]) })]
-        [Object] $Value
+        [Object] $Value,
+
+        [Parameter(Mandatory = $false)] 
+        [switch] $Closing
     )
 
     $dnPath = ConvertTo-DNPath -Path:$Path;
@@ -99,8 +102,14 @@ function New-DNChild {
     }
     elseif (-not ($Value -is [hashtable])) { throw "Incorrect Value type." }  
 
+    [string] $childType = $dnPath.PathType;
+    if ($Closing) {
+        if ([ChildType]::$childType -eq [ChildType]::Section) { $childType = [ChildType]::EndOfSection }
+        if ([ChildType]::$childType -eq [ChildType]::Item) { $childType = [ChildType]::EndOfItem }
+    }
+
     return [PSCustomObject] @{ 
-        ChildType = $dnPath.PathType; 
+        ChildType = $childType; 
         Path = $dnPath;
         Value = $Value;
         ValueType = ($Value.GetType().ToString() -split "\.") | Select-Object -Last 1
@@ -135,57 +144,6 @@ function Import-DN {
 }
 
 Set-Alias -Name:impdn -Value:Import-DN
-
-function Get-DNChildItem {
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory = $true, ValueFromPipeline = $true)] 
-        [ValidateScript({ "DN" -eq $_.ChildType })]
-        [PSCustomObject] $DN,
-
-        [Parameter(Mandatory = $true)] [Alias("P")] [string] $Path,
-
-        [Parameter(Mandatory = $false)] [switch] $AddParents
-    )
-
-    $dnPath = ConvertTo-DNPath -Path:$Path;
-    $output = @();
-
-        [hashtable] $Root = $DN.V;
-        $MatchingSectionKeys = $Root.Keys | Where-Object { $_ -like $dnPath.SectionPart }
-
-        foreach ($SectionKey in $MatchingSectionKeys) {
-            $Section = $Root[$SectionKey];
-            if ([ChildType]::($dnPath.PathType) -eq [ChildType]::S) {
-                $output += (ndni -IT:([ChildType]::S) -K:$SectionKey -P:$SectionKey -V:$Section)               
-            }
-            else {
-                if ($AddParents) { $output += (ndni -IT:([ChildType]::S) -K:$SectionKey -P:$SectionKey -V:$Section) ; }
-                $MatchingItemKeys = $Section.Keys | Where-Object { $_ -like $dnPath.ItemPart }
-                foreach ($ItemKey in $MatchingItemKeys) {
-                    $ItemPath = "${SectionKey}${PathDelimiter}${ItemKey}";                    
-                    $Item = $Section[$ItemKey];              
-                    if ([ChildType]::($dnPath.PathType) -eq [ChildType]::I) {
-                        $output += (ndni -IT:([ChildType]::I) -K:$ItemKey -P:$ItemPath -V:$Item )                      
-                    }
-                    else {
-                        if ($AddParents) { $output += (ndni -IT ([ChildType]::I) -K:$ItemKey -P:$ItemPath -V:$Item)  }
-                        $MatchingPropertyKeys = $Item.Keys | Where-Object { $_ -like $dnPath.PropertyPart }
-                        foreach ($PropertyKey in $MatchingPropertyKeys) {
-                            $PropertyPath = "${SectionKey}${PathDelimiter}${ItemKey}${PathDelimiter}${PropertyKey}";                            
-                            $Property = $Item[$PropertyKey];
-                            $output += (ndni -IT:([ChildType]::P) -K:$PropertyKey -P:$PropertyPath -V:$Property)
-                        }
-                    }
-                    if ($AddParents) { $output += (ndni -IT ([ChildType]::EoI) -K $ItemKey -P $ItemPath -V $Item)  }
-                }
-            }
-            if ($AddParents) { $output += (ndni -IT:([ChildType]::EoS) -K:$SectionKey -P:$SectionKey -V:$Section)  }
-        }
-        return $output;
-}
-
-Set-Alias -Name:gdnci -Value:Get-DNChildItem
 
 function Join-DNItem {
     [CmdletBinding()]
@@ -281,14 +239,16 @@ function Get-DNSection {
         [ValidateScript({ "DN" -eq $_.ChildType })]
         [PSCustomObject] $DN,
 
-        [Parameter(Mandatory = $true)] [Alias("P")] [PSCustomObject] $DNPath,
+        [Parameter(Mandatory = $false)] [Alias("DNP")] [PSCustomObject] $DNPath,
 
-        [Parameter(Mandatory = $false)] [Alias("OC")] [System.Collections.Generic.List[PSCustomObject]] $OutputCollector ,
+        [Parameter(Mandatory = $false)] [Alias("P")] [string] $Path,
 
-        [Parameter(Mandatory = $false)] [switch] $AddParents
+        [Parameter(Mandatory = $false)] [Alias("OC")] [System.Collections.Generic.List[PSCustomObject]] $OutputCollector
     )
 
     Begin {
+        if ($null -eq $DNPath -and $null -eq $Path) { throw "Path not specified." }
+        if ($null -eq $DNPath) { $DNPath = (ConvertTo-DNPath -Path:$Path) }
         $output = New-Object 'System.Collections.Generic.List[PSCustomObject]';
         if ($null -eq $OutputCollector) { $OutputCollector = New-Object 'System.Collections.Generic.List[PSCustomObject]'; }
     }
@@ -301,6 +261,7 @@ function Get-DNSection {
             $output.Add((ndnc -P:$sectionKey -V:$section));    
         }
     }
+
     End {
         if ([ChildType]::($DNPath.PathType) -eq [ChildType]::Section) { 
             $OutputCollector.AddRange($output);
@@ -310,6 +271,119 @@ function Get-DNSection {
 }
 
 Set-Alias -Name:gdns -Value:Get-DNSection
+
+function Get-DNItem {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true, ValueFromPipeline = $true)] 
+        [ValidateScript({ [ChildType]::Section -eq [ChildType]::($_.ChildType) })]
+        [PSCustomObject] $ChildItem,
+
+        [Parameter(Mandatory = $false)] [Alias("DNP")] [PSCustomObject] $DNPath,
+
+        [Parameter(Mandatory = $false)] [Alias("P")] [string] $Path,
+
+        [Parameter(Mandatory = $false)] [Alias("OC")] [System.Collections.Generic.List[PSCustomObject]] $OutputCollector ,
+
+        [Parameter(Mandatory = $false)] [Alias("Emb")] [switch] $AddEmbedding
+    )
+
+    Begin {
+        if ($null -eq $DNPath -and $null -eq $Path) { throw "Path not specified." }
+        if ($null -eq $DNPath) { $DNPath = (ConvertTo-DNPath -Path:$Path) }
+        if ([ChildType]::Section -eq [ChildType]::($DNPath.PathType)) { return }        
+        $output = New-Object 'System.Collections.Generic.List[PSCustomObject]';
+        if ($null -eq $OutputCollector) { $OutputCollector = New-Object 'System.Collections.Generic.List[PSCustomObject]'; }
+    }
+
+    Process {
+        if ([ChildType]::Section -eq [ChildType]::($DNPath.PathType)) { return }  
+
+        if ($AddEmbedding) { $output.Add($ChildItem); }
+        $value = $ChildItem.Value;        
+        $matchingItemKeys = $value.Keys | Where-Object { $_ -like $DNPath.ItemPart }
+        foreach ($itemKey in $matchingItemKeys) {
+            $item = $value[$itemKey];
+            $itemPath = "$($ChildItem.Path.FullPath)${PathDelimiter}${itemKey}";
+            $output.Add((ndnc -P:$itemPath -V:$item));    
+        }
+        if ($AddEmbedding) { $output.Add((ndnc -P:($ChildItem.Path.FullPath) -V:($ChildItem.Value) -Closing)); }
+    }
+    End {
+        if ([ChildType]::Section -eq [ChildType]::($DNPath.PathType)) { return }  
+
+        if ([ChildType]::($DNPath.PathType) -eq [ChildType]::Item) { 
+            $OutputCollector.AddRange($output);
+        }
+        $output | Write-Output;
+    }
+}
+
+Set-Alias -Name:gdni -Value:Get-DNItem
+
+function Get-DNItemProperty {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true, ValueFromPipeline = $true)] 
+        [ValidateScript({ @([ChildType]::Section,[ChildType]::EndOfSection, [ChildType]::Item ).Contains([ChildType]::($_.ChildType)) })]
+        [PSCustomObject] $ChildItem,
+
+        [Parameter(Mandatory = $false)] [Alias("DNP")] [PSCustomObject] $DNPath,
+
+        [Parameter(Mandatory = $false)] [Alias("P")] [string] $Path,
+
+        [Parameter(Mandatory = $false)] [Alias("OC")] [System.Collections.Generic.List[PSCustomObject]] $OutputCollector ,
+
+        [Parameter(Mandatory = $false)] [Alias("Emb")] [switch] $AddEmbedding
+    )
+
+    Begin {
+        if ($null -eq $DNPath -and $null -eq $Path) { throw "Path not specified." }
+        if ($null -eq $DNPath) { $DNPath = (ConvertTo-DNPath -Path:$Path) }
+        if ([ChildType]::Item -eq [ChildType]::($DNPath.PathType)) { return }
+        $output = New-Object 'System.Collections.Generic.List[PSCustomObject]';
+        if ($null -eq $OutputCollector) { $OutputCollector = New-Object 'System.Collections.Generic.List[PSCustomObject]'; }
+    }
+
+    Process {
+        if ([ChildType]::Item -eq [ChildType]::($DNPath.PathType)) { return }
+
+        if ([ChildType]::($ChildItem.Path.PathType) -eq [ChildType]::Section) { 
+            if ($AddEmbedding) {
+                $output.Add($ChildItem);
+            }
+        }
+
+        if (([ChildType]::($ChildItem.Path.PathType) -eq [ChildType]::Item)) 
+        {
+            if ($AddEmbedding) { $output.Add($ChildItem); }
+            $value = $ChildItem.Value;  
+            $matchingPropertyKeys = $value.Keys | Where-Object { $_ -like $DNPath.PropertyPart }
+            foreach ($propertyKey in $matchingPropertyKeys) {
+                $property = $value[$propertyKey];
+                $propertyPath = "$($ChildItem.Path.FullPath)${PathDelimiter}${propertyKey}";
+                $output.Add((ndnc -P:$propertyPath -V:$property));
+            }
+            if ($AddEmbedding) { $output.Add((ndnc -P:($ChildItem.Path.FullPath) -V:($ChildItem.Value) -Closing)); }
+        }
+
+        if ($AddEmbedding) { 
+            if ([ChildType]::($ChildItem.Path.PathType) -eq [ChildType]::EndOfSection) {
+                $output.Add($ChildItem);
+            }
+        }
+    }
+    End {
+        if ([ChildType]::Item -eq [ChildType]::($DNPath.PathType)) { return }
+
+        if ([ChildType]::($DNPath.PathType) -eq [ChildType]::Property) { 
+            $OutputCollector.AddRange($output);
+        }
+        $output | Write-Output;
+    }
+}
+
+Set-Alias -Name:gdnip -Value:Get-DNItemProperty
 
 function Export-DN {
     [CmdletBinding()]
@@ -395,6 +469,41 @@ function Set-DNItem {
 
 Set-Alias -Name:sdni -Value:Set-DnItem
 
+#endregion
+
+#region l-3
+function Get-DNChildItem {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true, ValueFromPipeline = $true)] 
+        [ValidateScript({ "DN" -eq $_.ChildType })]
+        [PSCustomObject] $DN,
+
+        [Parameter(Mandatory = $false)] [Alias("DNP")] [PSCustomObject] $DNPath,
+
+        [Parameter(Mandatory = $false)] [Alias("P")] [string] $Path,
+
+        [Parameter(Mandatory = $false)] [Alias("Emb")] [switch] $AddEmbedding
+    )
+
+    Begin {
+        if ($null -eq $DNPath -and $null -eq $Path) { throw "Path not specified." }
+        if ($null -eq $DNPath) { $DNPath = (ConvertTo-DNPath -Path:$Path) }
+        $outputCollector = New-Object 'System.Collections.Generic.List[PSCustomObject]';
+    }
+
+    Process {
+        $_ | gdns -DNPath:$DNPath -OC:$outputCollector | 
+        gdni -DNPath:$DNPath -OC:$outputCollector -AddEmbedding:$AddEmbedding | 
+        gdnip -DNPath:$DNPath -OC:$outputCollector -AddEmbedding:$AddEmbedding | Out-Null;
+    }
+    
+    End {
+        $outputCollector | Write-Output;
+    }
+}
+
+Set-Alias -Name:gdnci -Value:Get-DNChildItem
 #endregion
 
 Export-ModuleMember -Function *
