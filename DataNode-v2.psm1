@@ -385,50 +385,6 @@ function Get-DNItemProperty {
 
 Set-Alias -Name:gdnip -Value:Get-DNItemProperty
 
-function Export-DN {
-    [CmdletBinding()]
-    param (
-        [ValidateScript({ [ChildType]::($_.IT) -eq [ChildType]::DN })]
-        [Parameter(Mandatory = $true)] [PSCustomObject] $DN,
-        [Parameter(Mandatory = $false)] [Alias("FP")] [string] $FilePath
-    )
-
-    try {
-        $FilePath = $FilePath ?? $DN.P
-        $ext = [System.IO.Path]::GetExtension($FilePath);
-        switch ($ext) {
-            { $_ -eq ("." + [FileFormatEnum]::psd1) } { 
-                $output = "@{`n";
-                gdnci -DN:$DN -P:"*${PathDelimiter}*${PathDelimiter}*" -AddParents |
-                ForEach-Object {
-                    $dni = $_;
-                    switch ($dni.it) {
-                        { $_ -eq [ChildType]::S } { $output += "`t$($dni.K) = @{`n"; }
-                        { $_ -eq [ChildType]::I } { $output += "`t`t$($dni.K) = @{`n"; }
-                        { $_ -eq [ChildType]::P } { 
-                            $textDelimiter = $dni.VT -eq [ValueType]::String ? "'" : ""
-                            $output += "`t`t`t$($dni.K) = ${textDelimiter}$($dni.V)${textDelimiter};`n"; 
-                        }
-                        { $_ -eq [ChildType]::EoI } { $output += "`t`t};`n"; }                        
-                        { $_ -eq [ChildType]::EoS } { $output += "`t};`n"; }
-                    }
-                }
-                $output += "}";
-                break; 
-            }
-            default { throw "File format '$ext' not supported." }
-        }
-    }
-    catch {
-        Write-Error $_
-    }        
-
-    Set-Content -Path:$FilePath -Value:$output;
-    Get-Item -Path:$FilePath;
-}
-
-Set-Alias -Name:expdn -Value:Export-DN
-
 function Set-DNItem {
     [CmdletBinding()]
     param (
@@ -504,6 +460,59 @@ function Get-DNChildItem {
 }
 
 Set-Alias -Name:gdnci -Value:Get-DNChildItem
+#endregion
+
+#region l-4
+
+function Export-DN {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true, ValueFromPipeline = $true)] 
+        [ValidateScript({ "DN" -eq $_.ChildType })]
+        [PSCustomObject] $DN,
+
+        [Parameter(Mandatory = $false)] [Alias("FP")] [string] $FilePath
+    )
+
+    Process {
+        $FilePath = $FilePath ?? $DN.Path;
+        if ($null -eq $FilePath) { throw "File Path not specified." }
+        $ext = [System.IO.Path]::GetExtension($FilePath);
+
+        switch ($ext) {
+            { $_ -eq ("." + [FileFormatEnum]::psd1) } { 
+                $output = "@{`n";
+                $DN | gdnci -P:"*${PathDelimiter}*${PathDelimiter}*" -AddEmbedding |
+                ForEach-Object {
+                    $dni = $_;
+                    switch ($dni.ChildType) {
+                        { [ChildType]::$_ -eq [ChildType]::Section } { $output += "`t$($dni.Path.Key) = @{`n"; }
+                        { [ChildType]::$_ -eq [ChildType]::Item } { $output += "`t`t$($dni.Path.Key) = @{`n"; }
+                        { [ChildType]::$_ -eq [ChildType]::Property } { 
+                            $textDelimiter = [ValueType]::($dni.ValueType) -eq [ValueType]::String ? "'" : "";
+                            if ($dni.Value -is [Boolean]) { $dni.Value = $dni.Value ? "`$true" : "`$false" }
+                            $output += "`t`t`t$($dni.Path.Key) = ${textDelimiter}$($dni.Value)${textDelimiter};`n"; 
+                        }
+                        { [ChildType]::$_ -eq [ChildType]::EndOfItem } { $output += "`t`t};`n"; }                        
+                        { [ChildType]::$_ -eq [ChildType]::EndOfSection } { $output += "`t};`n"; }
+                    }
+                }
+                $output += "}";
+                break; 
+            }
+            default { throw "File format '$ext' not supported." }
+        }             
+    }
+
+    End {
+        Set-Content -Path:$FilePath -Value:$output;
+        Get-Item -Path:$FilePath;        
+    }
+     
+}
+
+Set-Alias -Name:expdn -Value:Export-DN
+
 #endregion
 
 Export-ModuleMember -Function *
