@@ -255,7 +255,7 @@ function Get-DNSection {
 
     Process {
         $value = $DN.Value;        
-        $matchingSectionKeys = $value.Keys | Where-Object { $_ -like $DNPath.SectionPart }
+        $matchingSectionKeys = $value.Keys | Where-Object { $_ -like $DNPath.SectionPart } | Sort-Object
         foreach ($sectionKey in $matchingSectionKeys) {
             $section = $value[$sectionKey];
             $output.Add((ndnc -P:$sectionKey -V:$section));    
@@ -301,7 +301,7 @@ function Get-DNItem {
 
         if ($AddEmbedding) { $output.Add($ChildItem); }
         $value = $ChildItem.Value;        
-        $matchingItemKeys = $value.Keys | Where-Object { $_ -like $DNPath.ItemPart }
+        $matchingItemKeys = $value.Keys | Where-Object { $_ -like $DNPath.ItemPart } | Sort-Object
         foreach ($itemKey in $matchingItemKeys) {
             $item = $value[$itemKey];
             $itemPath = "$($ChildItem.Path.FullPath)${PathDelimiter}${itemKey}";
@@ -358,7 +358,7 @@ function Get-DNItemProperty {
         {
             if ($AddEmbedding) { $output.Add($ChildItem); }
             $value = $ChildItem.Value;  
-            $matchingPropertyKeys = $value.Keys | Where-Object { $_ -like $DNPath.PropertyPart }
+            $matchingPropertyKeys = $value.Keys | Where-Object { $_ -like $DNPath.PropertyPart } | Sort-Object
             foreach ($propertyKey in $matchingPropertyKeys) {
                 $property = $value[$propertyKey];
                 $propertyPath = "$($ChildItem.Path.FullPath)${PathDelimiter}${propertyKey}";
@@ -460,6 +460,37 @@ function Get-DNChildItem {
 }
 
 Set-Alias -Name:gdnci -Value:Get-DNChildItem
+
+function Get-Psd1Content {
+    param (
+        [Parameter(Mandatory = $true)] 
+        [ValidateScript({ "DN" -eq $_.ChildType })]
+        [PSCustomObject] $DN
+    )
+
+    $output = New-Object 'System.Collections.Generic.List[PSCustomObject]';
+    $output.Add("@{");
+
+    $DN | gdnci -P:"*${PathDelimiter}*${PathDelimiter}*" -AddEmbedding |
+    ForEach-Object {
+        if ([ChildType]::($_.ChildType) -eq [ChildType]::Property) {
+            if ([ValueType]::($_.ValueType) -eq [ValueType]::String) { $value = "'$($_.Value)'"; }
+            elseif ([ValueType]::($_.ValueType) -eq [ValueType]::Boolean) { $value = $_.Value ? "`$true" : "`$false"; }
+            else { $value = $_.value; }
+        }
+        $childItem = $_;
+        switch ([ChildType]::($_.ChildType)) {
+            { $_ -eq [ChildType]::Section } { $output.Add("`t$($childItem.Path.Key) = @{"); }
+            { $_ -eq [ChildType]::Item } { $output.Add("`t`t$($childItem.Path.Key) = @{"); }
+            { $_ -eq [ChildType]::Property } { $output.Add("`t`t`t$($childItem.Path.Key) = ${value};"); }
+            { $_ -eq [ChildType]::EndOfItem } { $output.Add("`t`t};"); }                        
+            { $_ -eq [ChildType]::EndOfSection } { $output.Add("`t};"); }
+        }
+    }
+    $output.Add("}");
+
+    return $output.ToArray() -join "`n";
+}
 #endregion
 
 #region l-4
@@ -471,42 +502,26 @@ function Export-DN {
         [ValidateScript({ "DN" -eq $_.ChildType })]
         [PSCustomObject] $DN,
 
-        [Parameter(Mandatory = $false)] [Alias("FP")] [string] $FilePath
+        [Parameter(Mandatory = $false)] [Alias("TP")] [string] $TargetPath
     )
 
     Process {
-        $FilePath = $FilePath ?? $DN.Path;
-        if ($null -eq $FilePath) { throw "File Path not specified." }
-        $ext = [System.IO.Path]::GetExtension($FilePath);
+        $TargetPath = $TargetPath ?? $DN.Path;
+        if ($null -eq $TargetPath) { throw "File Path not specified." }
+        $ext = [System.IO.Path]::GetExtension($TargetPath);
 
         switch ($ext) {
             { $_ -eq ("." + [FileFormatEnum]::psd1) } { 
-                $output = "@{`n";
-                $DN | gdnci -P:"*${PathDelimiter}*${PathDelimiter}*" -AddEmbedding |
-                ForEach-Object {
-                    $dni = $_;
-                    switch ($dni.ChildType) {
-                        { [ChildType]::$_ -eq [ChildType]::Section } { $output += "`t$($dni.Path.Key) = @{`n"; }
-                        { [ChildType]::$_ -eq [ChildType]::Item } { $output += "`t`t$($dni.Path.Key) = @{`n"; }
-                        { [ChildType]::$_ -eq [ChildType]::Property } { 
-                            $textDelimiter = [ValueType]::($dni.ValueType) -eq [ValueType]::String ? "'" : "";
-                            if ($dni.Value -is [Boolean]) { $dni.Value = $dni.Value ? "`$true" : "`$false" }
-                            $output += "`t`t`t$($dni.Path.Key) = ${textDelimiter}$($dni.Value)${textDelimiter};`n"; 
-                        }
-                        { [ChildType]::$_ -eq [ChildType]::EndOfItem } { $output += "`t`t};`n"; }                        
-                        { [ChildType]::$_ -eq [ChildType]::EndOfSection } { $output += "`t};`n"; }
-                    }
-                }
-                $output += "}";
+                $content = (Get-Psd1Content -DN:$DN);
                 break; 
             }
             default { throw "File format '$ext' not supported." }
-        }             
+        }        
     }
 
     End {
-        Set-Content -Path:$FilePath -Value:$output;
-        Get-Item -Path:$FilePath;        
+        Set-Content -Path:$TargetPath -Value:$content;
+        Get-Item -Path:$TargetPath;        
     }
      
 }
